@@ -3,7 +3,7 @@ LDADD = $(LIBINTL)
 
 if INC_MHTTP_SRC
 MHTTP_SRC=webu.h webu.c webu_html.h webu_html.c webu_status.h webu_status.c \
-					webu_stream.h webustream.c webu_text.h webu_text.c
+					webu_stream.h webu_stream.c webu_text.h webu_text.c
 endif
 
 bin_PROGRAMS = motion
