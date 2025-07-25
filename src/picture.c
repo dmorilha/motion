@@ -38,6 +38,7 @@
     #include <webp/mux.h>
 #endif /* HAVE_WEBP */
 
+#include <openssl/evp.h>
 
 /* EXIF image data is always in TIFF format, even if embedded in another
  * file type. This consists of a constant header (TIFF file header,
@@ -209,13 +210,6 @@ unsigned prepare_exif(unsigned char **exif, const struct context *cnt
     // use as much of it as is indicated by conf->frame_limit
     subtime = NULL;
 
-    if (cnt->conf.picture_exif) {
-        description = malloc(PATH_MAX);
-        mystrftime(cnt, description, PATH_MAX-1, cnt->conf.picture_exif, &tv1, NULL, 0);
-    } else {
-        description = NULL;
-    }
-
     /* Calculate an upper bound on the size of the APP1 marker so
      * we can allocate a buffer for it.
      */
@@ -225,9 +219,11 @@ unsigned prepare_exif(unsigned char **exif, const struct context *cnt
     int ifd1_tagcount = 0;
     unsigned datasize = 0;
 
-    if (description) {
+    char * digest = cnt->current_image->digest;
+
+    if (digest) {
         ifd0_tagcount ++;
-        datasize += 5 + strlen(description); /* Add 5 for NUL and alignment */
+        datasize += 5 + strlen(digest); /* Add 5 for NUL and alignment */
     }
 
     if (datetime) {
@@ -293,8 +289,8 @@ unsigned prepare_exif(unsigned char **exif, const struct context *cnt
     put_uint16(writing.buf, ifd0_tagcount);
     writing.buf += 2;
 
-    if (description) {
-        put_stringentry(&writing, TIFF_TAG_IMAGE_DESCRIPTION, description, 1);
+    if (digest) {
+        put_stringentry(&writing, TIFF_TAG_IMAGE_DESCRIPTION, digest, 1);
     }
 
     if (datetime) {
@@ -350,8 +346,6 @@ unsigned prepare_exif(unsigned char **exif, const struct context *cnt
 
     /* assert we didn't underestimate the original buffer size */
     assert(marker_len <= buffer_size);
-
-    free(description);
 
     *exif = marker;
     return marker_len;
@@ -489,6 +483,51 @@ static void put_webp_yuv420p_file(FILE *fp, unsigned char *image, int width, int
     #endif /* HAVE_WEBP */
 }
 
+static void md5digest(unsigned char * buffer, int size, char * * output) {
+  EVP_MD_CTX * mdctx;
+  const EVP_MD * md;
+  unsigned char md_value[EVP_MAX_MD_SIZE];
+  unsigned int md_len;
+
+  md = EVP_get_digestbyname("md5");
+
+  if (NULL == md) {
+    printf("Unknown message digest\n");
+    return;
+  }
+
+  mdctx = EVP_MD_CTX_new();
+
+  if (NULL == mdctx) {
+    printf("Message digest create failed.\n");
+    return;
+  }
+
+  if ( ! EVP_DigestInit_ex2(mdctx, md, NULL)) {
+    printf("Message digest initialization failed.\n");
+    EVP_MD_CTX_free(mdctx);
+    return;
+  }
+
+  if ( ! EVP_DigestUpdate(mdctx, buffer, size)) {
+    printf("Message digest update failed.\n");
+    EVP_MD_CTX_free(mdctx);
+    return;
+  }
+
+  if ( ! EVP_DigestFinal_ex(mdctx, md_value, &md_len)) {
+    printf("Message digest finalization failed.\n");
+    EVP_MD_CTX_free(mdctx);
+    return;
+  }
+
+  EVP_MD_CTX_free(mdctx);
+
+  for (int i = 0; i < md_len; ++i) {
+    sprintf(*output + i * 2, "%02x", md_value[i]);
+  }
+}
+
 /**
  * put_jpeg_yuv420p_file
  *      Converts an YUV420P coded image to a jpeg image and writes
@@ -505,7 +544,7 @@ static void put_webp_yuv420p_file(FILE *fp, unsigned char *image, int width, int
  * Returns nothing
  */
 static void put_jpeg_yuv420p_file(FILE *fp, unsigned char *image, int width, int height
-            , int quality, struct context *cnt, struct timeval *tv1, struct coord *box)
+            , int quality, struct context *cnt, struct timeval *tv1, struct coord *box, char * * digest)
 {
     int sz, image_size;
 
@@ -515,8 +554,11 @@ static void put_jpeg_yuv420p_file(FILE *fp, unsigned char *image, int width, int
     sz = jpgutl_put_yuv420p(buf, image_size, image, width, height, quality, cnt ,tv1, box);
     fwrite(buf, sz, 1, fp);
 
-    free(buf);
+    if (NULL != digest) {
+        md5digest(buf, sz, (char**)&digest);
+    }
 
+    free(buf);
 }
 
 /**
@@ -794,6 +836,7 @@ int put_picture_memory(struct context *cnt, unsigned char* dest_image, int image
 static void put_picture_fd(struct context *cnt, FILE *picture, unsigned char *image
             , int quality, int ftype)
 {
+    
     int width, height, passthrough;
 
     passthrough = util_check_passthrough(cnt);
@@ -819,9 +862,8 @@ static void put_picture_fd(struct context *cnt, FILE *picture, unsigned char *im
 
     } else {
         put_jpeg_yuv420p_file(picture, image, width, height, quality, cnt
-            , &(cnt->current_image->timestamp_tv), &(cnt->current_image->location));
+            , &(cnt->current_image->timestamp_tv), &(cnt->current_image->location), (char**)&cnt->current_image->digest);
     }
-
 }
 
 void put_picture(struct context *cnt, char *file, unsigned char *image, int ftype)

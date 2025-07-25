@@ -650,7 +650,7 @@ static void process_image_ring(struct context *cnt)
             break;
         }
 
-        /* Set inte global context that we are working with this image */
+        /* Set into global context that we are working with this image */
         cnt->current_image = &cnt->imgs.image_ring[cnt->imgs.image_ring_out];
 
         if (cnt->imgs.image_ring[cnt->imgs.image_ring_out].shot < cnt->conf.framerate) {
@@ -2258,16 +2258,13 @@ static void mlp_overlay(struct context *cnt)
         overlay_fixed_mask(cnt, cnt->imgs.img_motion.image_norm);
     }
 
-    /* Add changed pixels in upper right corner of the pictures */
-    if (cnt->conf.text_changes) {
-        if (!cnt->pause) {
-            sprintf(tmp, "%d", cnt->current_image->diffs);
-        } else {
-            sprintf(tmp, "-");
-        }
-
-        draw_text(cnt->current_image->image_norm, cnt->imgs.width, cnt->imgs.height,
-                  cnt->imgs.width - 10, 10, tmp, cnt->text_scale);
+    /* Add previous picture digest */
+    const int previous = cnt->imgs.image_ring_in;
+    if (0 < strlen(cnt->imgs.image_ring[previous].digest)) {
+      sprintf(tmp, "%s", cnt->imgs.image_ring[previous].digest);
+      draw_text(cnt->current_image->image_norm, cnt->imgs.width, cnt->imgs.height,
+                10, 10, tmp, cnt->text_scale);
+      strcpy(cnt->current_image->digest, cnt->imgs.image_ring[previous].digest);
     }
 
     /*
@@ -2286,12 +2283,14 @@ static void mlp_overlay(struct context *cnt)
                   tmp, cnt->text_scale);
     }
 
+
     /* Add text in lower left corner of the pictures */
     if (cnt->conf.text_left) {
-        mystrftime(cnt, tmp, sizeof(tmp), cnt->conf.text_left,
-                   &cnt->current_image->timestamp_tv, NULL, 0);
-        draw_text(cnt->current_image->image_norm, cnt->imgs.width, cnt->imgs.height,
-                  10, cnt->imgs.height - (10 * cnt->text_scale), tmp, cnt->text_scale);
+      mystrftime(cnt, tmp, sizeof(tmp), cnt->conf.text_left,
+          &cnt->current_image->timestamp_tv, NULL, 0);
+      draw_text(cnt->current_image->image_norm, cnt->imgs.width, cnt->imgs.height,
+          10, cnt->imgs.height - (10 * cnt->text_scale),
+          tmp, cnt->text_scale);
     }
 
     /* Add text in lower right corner of the pictures */
@@ -2950,7 +2949,7 @@ static void cntlist_create(int argc, char *argv[])
     context_init(cnt_list[0]);
 
     /* Initialize some static and global string variables */
-    gethostname (cnt_list[0]->hostname, PATH_MAX);
+    gethostname(cnt_list[0]->hostname, PATH_MAX);
     cnt_list[0]->hostname[PATH_MAX-1] = '\0';
     /* end of variables */
 

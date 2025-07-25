@@ -270,6 +270,7 @@ struct image_data {
 
     int total_labels;
 
+    char digest[128];
 };
 
 struct stream_data {
