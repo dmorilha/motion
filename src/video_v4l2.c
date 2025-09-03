@@ -32,6 +32,11 @@
 #include "video_v4l2.h"
 #include <sys/mman.h>
 
+#include <fcntl.h>
+#include <linux/usb/video.h>
+#include <linux/uvcvideo.h>
+#include <linux/videodev2.h>
+#include <sys/ioctl.h>
 
 #ifdef HAVE_V4L2
 
@@ -136,6 +141,37 @@ static int xioctl(src_v4l2_t *vid_source, unsigned long request, void *arg)
 
     return ret;
 }
+
+static void chicony_infrared_decode(void * map, unsigned char * src)
+{
+  uint16_t * destY = map;
+  #if 0
+  destU = destY + 640 * 480;
+  destV = destU + (640 * 480) / 4;
+  #endif
+
+  for (int i = 0; 480 > i; ++i) {
+    for (int j = 0; 800 > j; j += 5) {
+      const uint16_t p1 = src[j] | ((uint16_t)(src[j + 1] & 0x3) << 8);
+      const uint16_t p2 = (src[j + 2] >> 4) | ((uint16_t)(src[j + 3] & 0x3f) << 4);
+      *destY++ = p1;
+      *destY++ = p2;
+      #if 0
+      if (0 == i & 1) {
+        const uint16_t p3 = (src[j + 1] >> 2) | ((uint16_t)(src[j + 2] & 0xf) << 6);
+        const uint16_t p4 = (src[800 + j + 1] >> 2) | ((uint16_t)(src[800 + j + 2] & 0xf) << 6);
+        *destU++ = (p3 + p4) / 2;
+
+        const uint16_t p5 = (src[j + 3] >> 6) | ((uint16_t)src[j + 4] << 2);
+        const uint16_t p6 = (src[800 + j + 3] >> 6) | ((uint16_t)src[800 + j + 4] << 2);
+        *destV++ = (p5 + p6) / 2;
+      }
+      #endif
+    }
+    src += 800;
+  }
+}
+
 
 static void v4l2_vdev_free(struct context *cnt)
 {
@@ -398,6 +434,17 @@ static int v4l2_ctrls_set(struct context *cnt, struct video_dev *curdev)
                 }
             }
         }
+    }
+    if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
+      __u8 buffer = 0xff;
+      struct uvc_xu_control_query query = {
+        .unit = 0x05,
+        .selector = 0x02,
+        .query = UVC_SET_CUR,
+        .size = 1,
+        .data = &buffer,
+      };
+      xioctl(vid_source, UVCIOC_CTRL_QUERY, &query);
     }
 
     return 0;
@@ -858,7 +905,6 @@ static int v4l2_pixfmt_stride(struct video_dev *curdev)
 /* Adjust requested resolution if needed*/
 static int v4l2_pixfmt_adj(struct context *cnt, struct video_dev *curdev)
 {
-
     if ((curdev->width != cnt->conf.width) ||
         (curdev->height != cnt->conf.height)) {
 
@@ -1169,13 +1215,18 @@ static int v4l2_mmap_set(struct video_dev *curdev)
 
 static int v4l2_imgs_set(struct context *cnt, struct video_dev *curdev)
 {
-    cnt->imgs.width = curdev->width;
-    cnt->imgs.height = curdev->height;
+    src_v4l2_t * const vid_source = (src_v4l2_t *)curdev->v4l2_private;
+    if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
+      cnt->imgs.width = 640;
+      cnt->imgs.height = 480;
+    } else {
+      cnt->imgs.width = curdev->width;
+      cnt->imgs.height = curdev->height;
+    }
     cnt->imgs.motionsize = cnt->imgs.width * cnt->imgs.height;
     cnt->imgs.size_norm = (cnt->imgs.motionsize * 3) / 2;
-    cnt->conf.width = curdev->width;
-    cnt->conf.height = curdev->height;
-
+    cnt->conf.width = cnt->imgs.width;
+    cnt->conf.height = cnt->imgs.height;
     return 0;
 
 }
@@ -1250,7 +1301,6 @@ static int v4l2_pix_change(struct context *cnt, struct video_dev *curdev
         return 0;
     default:
         retcd = -1;
-
     }
 
     return -1;
@@ -1805,7 +1855,11 @@ int v4l2_next(struct context *cnt, struct image_data *img_data)
 
         retcd = v4l2_capture(dev);
 
-        if (retcd == 0) {
+        src_v4l2_t *vid_source = (src_v4l2_t *)dev->v4l2_private;
+        if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
+            video_buff *src = &vid_source->buffers[vid_source->buf.index];
+            chicony_infrared_decode(img_data->image_norm, src->ptr);
+        } else if (retcd == 0) {
             retcd = v4l2_pix_change(cnt, dev, img_data->image_norm);
         }
 
@@ -2014,4 +2068,3 @@ int v4l2_parms_valid(char *video_device, int v4l2_palette, int v4l2_fps, int v4l
         return 0;
     #endif // HAVE_V4L2
 }
-
