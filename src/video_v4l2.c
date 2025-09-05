@@ -144,29 +144,17 @@ static int xioctl(src_v4l2_t *vid_source, unsigned long request, void *arg)
 
 static void chicony_infrared_decode(void * map, unsigned char * src)
 {
-  uint16_t * destY = map;
-  #if 0
-  destU = destY + 640 * 480;
-  destV = destU + (640 * 480) / 4;
-  #endif
-
+  uint8_t * destY = map;
   for (int i = 0; 480 > i; ++i) {
     for (int j = 0; 800 > j; j += 5) {
       const uint16_t p1 = src[j] | ((uint16_t)(src[j + 1] & 0x3) << 8);
       const uint16_t p2 = (src[j + 2] >> 4) | ((uint16_t)(src[j + 3] & 0x3f) << 4);
+      const uint16_t p3 = (src[j + 1] >> 2) | ((uint16_t)(src[j + 2] & 0xf) << 6);
+      const uint16_t p4 = (src[j + 3] >> 6) | ((uint16_t)src[j + 4] << 2);
       *destY++ = p1;
       *destY++ = p2;
-      #if 0
-      if (0 == i & 1) {
-        const uint16_t p3 = (src[j + 1] >> 2) | ((uint16_t)(src[j + 2] & 0xf) << 6);
-        const uint16_t p4 = (src[800 + j + 1] >> 2) | ((uint16_t)(src[800 + j + 2] & 0xf) << 6);
-        *destU++ = (p3 + p4) / 2;
-
-        const uint16_t p5 = (src[j + 3] >> 6) | ((uint16_t)src[j + 4] << 2);
-        const uint16_t p6 = (src[800 + j + 3] >> 6) | ((uint16_t)src[800 + j + 4] << 2);
-        *destV++ = (p5 + p6) / 2;
-      }
-      #endif
+      *destY++ = p3;
+      *destY++ = p4;
     }
     src += 800;
   }
@@ -436,10 +424,10 @@ static int v4l2_ctrls_set(struct context *cnt, struct video_dev *curdev)
         }
     }
     if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
-      __u8 buffer = 0xff;
+      __u8 buffer = 0x20;
       struct uvc_xu_control_query query = {
-        .unit = 0x05,
-        .selector = 0x02,
+        .unit = 5,
+        .selector = 2,
         .query = UVC_SET_CUR,
         .size = 1,
         .data = &buffer,
