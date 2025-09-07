@@ -142,24 +142,89 @@ static int xioctl(src_v4l2_t *vid_source, unsigned long request, void *arg)
     return ret;
 }
 
-static void chicony_infrared_decode(void * map, unsigned char * src)
+static void chicony_infrared_decode(uint8_t * map, src_v4l2_t * const vid_source)
 {
-  uint8_t * destY = map;
+  video_buff * const buffer = &vid_source->buffers[vid_source->buf.index];
+  static uint16_t backoff = 100;
+  static uint16_t sensitivity = 0;
+  static uint64_t counter = 0;
+  uint32_t histogram[9] = { 0, };
+  uint8_t * src = buffer->ptr;
   for (int i = 0; 480 > i; ++i) {
     for (int j = 0; 800 > j; j += 5) {
       const uint16_t p1 = src[j] | ((uint16_t)(src[j + 1] & 0x3) << 8);
       const uint16_t p2 = (src[j + 2] >> 4) | ((uint16_t)(src[j + 3] & 0x3f) << 4);
       const uint16_t p3 = (src[j + 1] >> 2) | ((uint16_t)(src[j + 2] & 0xf) << 6);
       const uint16_t p4 = (src[j + 3] >> 6) | ((uint16_t)src[j + 4] << 2);
-      *destY++ = p1;
-      *destY++ = p2;
-      *destY++ = p3;
-      *destY++ = p4;
+      *map++ = p1;
+      ++histogram[255 < p1 ? 8 : p1 >> 5];
+      *map++ = p2;
+      ++histogram[255 < p2 ? 8 : p2 >> 5];
+      *map++ = p3;
+      ++histogram[255 < p3 ? 8 : p3 >> 5];
+      *map++ = p4;
+      ++histogram[255 < p4 ? 8 : p4 >> 5];
     }
     src += 800;
   }
+  int adjust = FALSE;
+  struct uvc_xu_control_query query = {
+    .unit = 0x05,
+    .selector = 0x04,
+    .query = 0,
+    .size = 2,
+    .data = NULL,
+  };
+  if (100 <= histogram[8] && 1 < sensitivity) {
+    if (0 == (backoff & 1)) {
+      if (100 < backoff) {
+        backoff = (backoff & 0xfffd) * 2;
+      } else {
+        backoff = 1000;
+      }
+      backoff |= 1;
+    }
+    // printf("decreasing infrared sensitivity from %u to %u\n", sensitivity, sensitivity - 1);
+    adjust = TRUE;
+    sensitivity--;
+  } else if (0 == counter++ % backoff) {
+    uint16_t current_sensitivity;
+    backoff &= 0xfffd;
+    query.query = UVC_GET_CUR;
+    query.data = (uint8_t*)&current_sensitivity;
+    xioctl(vid_source, UVCIOC_CTRL_QUERY, &query);
+    if (0 == sensitivity) {
+      sensitivity = current_sensitivity;
+    } else {
+      adjust = current_sensitivity != sensitivity;
+    }
+    if (FALSE == adjust && 0 == histogram[8] &&
+        (0 == histogram[7] || 0 == histogram[6] == 0 || histogram[3] < histogram[2])) {
+      // printf("increasing infrared sensitivity from %u to %u\n", sensitivity, sensitivity + 1);
+      adjust = TRUE;
+      sensitivity++;
+      if (100 < backoff) {
+        backoff = 500;
+      }
+    } else {
+      backoff = 100;
+    }
+#if 0
+    // print histogram
+    if (FALSE == adjust) {
+      for (int i = 0; 9 > i; ++i) {
+        printf("%02d: %u\n", i, histogram[i]);
+      }
+      printf("\n");
+    }
+#endif
+  }
+  if (TRUE == adjust) {
+    query.query = UVC_SET_CUR;
+    query.data = (uint8_t*)&sensitivity;
+    xioctl(vid_source, UVCIOC_CTRL_QUERY, &query);
+  }
 }
-
 
 static void v4l2_vdev_free(struct context *cnt)
 {
@@ -424,7 +489,7 @@ static int v4l2_ctrls_set(struct context *cnt, struct video_dev *curdev)
         }
     }
     if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
-      __u8 buffer = 0x20;
+      uint8_t buffer = 25;
       struct uvc_xu_control_query query = {
         .unit = 5,
         .selector = 2,
@@ -1845,8 +1910,7 @@ int v4l2_next(struct context *cnt, struct image_data *img_data)
 
         src_v4l2_t *vid_source = (src_v4l2_t *)dev->v4l2_private;
         if (0 == strcmp("Integrated IR Camera: Integrate", vid_source->cap.card)) {
-            video_buff *src = &vid_source->buffers[vid_source->buf.index];
-            chicony_infrared_decode(img_data->image_norm, src->ptr);
+            chicony_infrared_decode(img_data->image_norm, vid_source);
         } else if (retcd == 0) {
             retcd = v4l2_pix_change(cnt, dev, img_data->image_norm);
         }
