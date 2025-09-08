@@ -169,8 +169,8 @@ static void chicony_infrared_decode(uint8_t * map, src_v4l2_t * const vid_source
   }
   int adjust = FALSE;
   struct uvc_xu_control_query query = {
-    .unit = 0x05,
-    .selector = 0x04,
+    .unit = 5,
+    .selector = 4,
     .query = 0,
     .size = 2,
     .data = NULL,
@@ -204,7 +204,7 @@ static void chicony_infrared_decode(uint8_t * map, src_v4l2_t * const vid_source
       adjust = TRUE;
       sensitivity++;
       if (100 < backoff) {
-        backoff = 500;
+        backoff = 1000;
       }
     } else {
       backoff = 100;
